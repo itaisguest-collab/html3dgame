@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "express": "^5.2.1",
+    "gun": "^0.2020.1241",
+    "socket.io": "^4.8.3"
+  }
+}
