@@ -442,6 +442,7 @@ input[type=text]::placeholder{color:rgba(80,110,160,.4);}
 // ── THREE.JS SETUP ────────────────────────────────────────
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(65, innerWidth/innerHeight, .005, 3000);
+scene.add(camera);
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -483,6 +484,7 @@ const modelCache = {};   // name → THREE.Group (cloneable)
 // Put these .glb files in a folder called "models/" next to server.js
 const MODEL_FILES = {
   xwing:        'models/xwing.glb',
+  xwing_cockpit:'models/x-wing_cockpit.glb',
   awing:        'models/awing.glb',
   ywing:        'models/ywing.glb',
   falcon:       'models/falcon.glb',
@@ -509,6 +511,7 @@ const MODEL_TARGET_SIZE = {
 // Rotation overrides — point models forward (−Z) if needed
 const MODEL_ROT = {
   xwing:        [0, Math.PI, 0],
+  xwing_cockpit:[0, 0, 0],
   awing:        [0, Math.PI, 0],
   ywing:        [0, Math.PI, 0],
   falcon:       [0, Math.PI, 0],
@@ -523,6 +526,15 @@ const MODEL_ROT = {
 function fitModel(root, name){
   const rot = MODEL_ROT[name] || [0,0,0];
   root.rotation.set(...rot);
+  if(name==='xwing_cockpit'){
+    root.traverse(c=>{
+      if(c.isMesh){
+        c.castShadow=false;
+        c.receiveShadow=false;
+      }
+    });
+    return;
+  }
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
   const size = new THREE.Vector3();
@@ -721,6 +733,34 @@ function mkBuzz(tc=0x1a6b1a){const g=new THREE.Group();const M=(col,r=.8,m=.05)=
 const buzzModel=mkBuzz();const buzzContainer=new THREE.Group();buzzContainer.add(buzzModel);scene.add(buzzContainer);
 const PLAYER_SHIP_SCALE=1.22;
 let shipModel=mkShip('xwing');const shipGroup=new THREE.Group();shipGroup.scale.setScalar(PLAYER_SHIP_SCALE);shipGroup.add(shipModel);scene.add(shipGroup);
+const xwingCockpitView=new THREE.Group();
+let xwingCockpitMesh=null;
+const XWING_COCKPIT_POS=new THREE.Vector3(0,-1.18,-2.52);
+const XWING_COCKPIT_ROT=new THREE.Euler(0,0,0);
+const XWING_COCKPIT_SCALE=1.08;
+xwingCockpitView.visible=false;
+camera.add(xwingCockpitView);
+
+function ensureXwingCockpitView(){
+  if(xwingCockpitMesh) return;
+  const loaded=getModel('xwing_cockpit');
+  if(loaded){
+    xwingCockpitMesh=loaded;
+  }else{
+    // Fallback so first-person still has a cockpit frame if model is missing.
+    const g=new THREE.Group();
+    const mat=new THREE.MeshBasicMaterial({color:0x2a3b2a,transparent:true,opacity:.82});
+    const left=new THREE.Mesh(new THREE.BoxGeometry(.12,.52,.9),mat);left.position.set(-.48,-.2,-.65);
+    const right=new THREE.Mesh(new THREE.BoxGeometry(.12,.52,.9),mat);right.position.set(.48,-.2,-.65);
+    const top=new THREE.Mesh(new THREE.BoxGeometry(1.15,.08,.7),mat);top.position.set(0,.05,-.75);
+    g.add(left);g.add(right);g.add(top);
+    xwingCockpitMesh=g;
+  }
+  xwingCockpitMesh.scale.setScalar(XWING_COCKPIT_SCALE);
+  xwingCockpitMesh.position.copy(XWING_COCKPIT_POS);
+  xwingCockpitMesh.rotation.copy(XWING_COCKPIT_ROT);
+  xwingCockpitView.add(xwingCockpitMesh);
+}
 
 // ── ENEMIES placeholder (wave system fills these) ──────────
 const enemies=[];
@@ -2173,13 +2213,38 @@ function updatePhysics(){
   document.getElementById('planetlbl').textContent=gs.nearPlanet?gs.nearPlanet.data.name:'—';}
 
 function updateCamera(){
-  if(gs.mode==='SHIP'){const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(gs.shipPitch,gs.shipYaw,0,'YXZ'));const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(q);const up=new THREE.Vector3(0,1,0).applyQuaternion(q);if(shipFirstPerson){camera.position.copy(gs.shipPos).add(fwd.clone().multiplyScalar(2.2)).add(up.clone().multiplyScalar(1.2));camera.lookAt(camera.position.clone().add(fwd.clone().multiplyScalar(80)));}else{camera.position.copy(gs.shipPos).add(fwd.clone().negate().multiplyScalar(16)).add(up.clone().multiplyScalar(5.5));camera.lookAt(camera.position.clone().add(fwd.clone().multiplyScalar(30)));}}
+  if(gs.mode==='SHIP'){
+    const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(gs.shipPitch,gs.shipYaw,0,'YXZ'));
+    const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(q);
+    const up=new THREE.Vector3(0,1,0).applyQuaternion(q);
+    const xwingCockpitOn=shipFirstPerson&&selectedShip==='xwing';
+    if(shipFirstPerson){
+      camera.position.copy(gs.shipPos).add(fwd.clone().multiplyScalar(.04)).add(up.clone().multiplyScalar(1.36));
+      camera.lookAt(camera.position.clone().add(fwd.clone().multiplyScalar(90)));
+      if(camera.fov!==72){camera.fov=72;camera.updateProjectionMatrix();}
+    }else{
+      camera.position.copy(gs.shipPos).add(fwd.clone().negate().multiplyScalar(16)).add(up.clone().multiplyScalar(5.5));
+      camera.lookAt(camera.position.clone().add(fwd.clone().multiplyScalar(30)));
+      if(camera.fov!==65){camera.fov=65;camera.updateProjectionMatrix();}
+    }
+
+    if(xwingCockpitOn){
+      ensureXwingCockpitView();
+      xwingCockpitView.visible=true;
+      shipGroup.visible=false;
+      document.getElementById('xhair').style.display='none';
+    }else{
+      xwingCockpitView.visible=false;
+      shipGroup.visible=true;
+      document.getElementById('xhair').style.display='';
+    }
+  }
   else if(gs.mode==='FOOT'){const up=getPlayerUp(),yQ=new THREE.Quaternion().setFromAxisAngle(up,gs.playerYaw);const bR=new THREE.Vector3(1,0,0).applyQuaternion(yQ),bF=new THREE.Vector3().crossVectors(up,bR).normalize();const lookDir=bF.clone().applyQuaternion(new THREE.Quaternion().setFromAxisAngle(bR,gs.playerPitch)).normalize();const camPos=gs.playerPos.clone().sub(lookDir.clone().multiplyScalar(5.5)).add(up.clone().multiplyScalar(2.2));camera.position.copy(camPos);camera.lookAt(camPos.clone().add(lookDir.clone().multiplyScalar(25)));}}
 
 function updateCockpitHud(){
   const cp=document.getElementById('cockpit-hud');
   if(!cp) return;
-  const show=shipFirstPerson&&gs.mode==='SHIP'&&document.getElementById('hud').style.display!=='none';
+  const show=shipFirstPerson&&gs.mode==='SHIP'&&selectedShip!=='xwing'&&document.getElementById('hud').style.display!=='none';
   cp.classList.toggle('on',show);
   if(!show) return;
   cp.dataset.ship=selectedShip;
@@ -2383,6 +2448,8 @@ function applySelectedShipStats(resetProgress=true){
   shipGroup.remove(shipModel);
   shipModel=mkShip(selectedShip);
   shipGroup.add(shipModel);
+  if(selectedShip!=='xwing') xwingCockpitView.visible=false;
+  shipGroup.visible=true;
   const STATS={
     xwing: {hp:100, spd:1.0,  sh:60,  label:SHIP_LOADOUTS.xwing.special},
     awing: {hp:65,  spd:1.7,  sh:35,  label:SHIP_LOADOUTS.awing.special},
